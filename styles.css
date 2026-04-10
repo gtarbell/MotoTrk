@@ -1,0 +1,176 @@
+:root {
+  --bg: #0f1115;
+  --panel: #171b22;
+  --panel-border: #2a3340;
+  --text: #e7edf5;
+  --muted: #9fb0c3;
+  --danger: #ff5c6a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", Tahoma, sans-serif;
+  background: radial-gradient(circle at top, #1a202a 0%, var(--bg) 55%);
+  color: var(--text);
+}
+
+.app-header {
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--panel-border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+}
+
+h2 {
+  font-size: 1rem;
+  margin-bottom: 0.7rem;
+}
+
+.layout {
+  display: grid;
+  gap: 0.9rem;
+  grid-template-columns: 360px 1fr;
+  grid-template-rows: auto auto;
+  padding: 0.9rem;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 0.9rem;
+}
+
+.controls {
+  grid-row: 1 / span 2;
+}
+
+.control-row {
+  display: block;
+  margin-bottom: 0.75rem;
+}
+
+.control-row > span {
+  display: block;
+  color: var(--muted);
+  margin-bottom: 0.3rem;
+  font-size: 0.9rem;
+}
+
+textarea,
+input,
+select,
+button {
+  width: 100%;
+  background: #11161d;
+  color: var(--text);
+  border: 1px solid #374356;
+  border-radius: 8px;
+  padding: 0.55rem;
+}
+
+textarea {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  resize: vertical;
+}
+
+button {
+  cursor: pointer;
+  font-weight: 600;
+  transition: filter 0.15s ease;
+}
+
+button:hover {
+  filter: brightness(1.07);
+}
+
+.buttons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-bottom: 1rem;
+}
+
+.event-form {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.event-form label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.status {
+  margin: 0.9rem 0 0;
+  font-size: 0.9rem;
+}
+
+.status.error {
+  color: var(--danger);
+}
+
+.map-panel {
+  min-height: 460px;
+}
+
+.map-container {
+  width: 100%;
+  min-height: 420px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+#mapCanvas {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  background: #0e131b;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+th,
+td {
+  border-bottom: 1px solid #2a3340;
+  padding: 0.5rem;
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+@media (max-width: 1080px) {
+  .layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto;
+  }
+
+  .controls {
+    grid-row: auto;
+  }
+}

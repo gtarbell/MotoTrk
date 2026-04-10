@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MotoTrk Race Tracker</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>MotoTrk Race Tracker</h1>
+    </header>
+
+    <main class="layout">
+      <section class="panel controls">
+        <h2>Race Setup</h2>
+
+        <label class="control-row">
+          <span>Course Source</span>
+          <select id="courseSource">
+            <option value="upload">Upload GPX</option>
+            <option value="example">Example Course (auto beacons)</option>
+          </select>
+        </label>
+
+        <label class="control-row">
+          <span>Course GPX</span>
+          <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" />
+        </label>
+
+        <label class="control-row">
+          <span>Beacons JSON</span>
+          <textarea id="beaconsInput" rows="8" spellcheck="false"></textarea>
+        </label>
+
+        <label class="control-row">
+          <span>Riders JSON</span>
+          <textarea id="ridersInput" rows="8" spellcheck="false"></textarea>
+        </label>
+
+        <div class="buttons">
+          <button id="loadDataBtn" type="button">Load Race Data</button>
+          <button id="loadSampleBtn" type="button">Load Sample Data</button>
+        </div>
+
+        <h2>Live Beacon Pass</h2>
+        <div class="event-form">
+          <label>
+            Rider
+            <select id="riderSelect"></select>
+          </label>
+
+          <label>
+            Beacon
+            <select id="beaconSelect"></select>
+          </label>
+
+          <label>
+            Place (optional)
+            <input id="placeInput" type="number" min="1" step="1" placeholder="e.g. 3" />
+          </label>
+
+          <button id="recordPassBtn" type="button">Record Pass</button>
+        </div>
+
+        <p id="status" class="status">Load course + race data to begin.</p>
+      </section>
+
+      <section class="panel map-panel">
+        <h2>Course Map</h2>
+        <div id="mapContainer" class="map-container">
+          <div id="mapCanvas" aria-label="Google map for race course"></div>
+        </div>
+      </section>
+
+      <section class="panel riders-panel">
+        <h2>Rider Status</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Plate</th>
+                <th>Name</th>
+                <th>Last Beacon</th>
+                <th>Pace</th>
+                <th>Projected</th>
+                <th>State</th>
+              </tr>
+            </thead>
+            <tbody id="ridersTableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
