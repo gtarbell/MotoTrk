@@ -16,21 +16,13 @@
         <h2>Race Setup</h2>
 
         <label class="control-row">
-          <span>Course Source</span>
-          <select id="courseSource">
-            <option value="upload">Upload GPX</option>
-            <option value="example">Example Course (auto beacons)</option>
-          </select>
-        </label>
-
-        <label class="control-row">
           <span>Course GPX</span>
           <input id="gpxFile" type="file" accept=".gpx,application/gpx+xml,application/xml,text/xml" />
         </label>
 
         <label class="control-row">
-          <span>Beacons JSON</span>
-          <textarea id="beaconsInput" rows="8" spellcheck="false"></textarea>
+          <span>Beacons JSON File</span>
+          <input id="beaconFile" type="file" accept=".json,application/json,text/json" />
         </label>
 
         <label class="control-row">
@@ -61,6 +53,7 @@
           </label>
 
           <button id="recordPassBtn" type="button">Record Pass</button>
+          <button id="runTestBtn" type="button">Run Test Beacon Sequence</button>
         </div>
 
         <p id="status" class="status">Load course + race data to begin.</p>

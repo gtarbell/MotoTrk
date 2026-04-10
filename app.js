@@ -1,14 +1,8 @@
 const REFRESH_MS = 3000;
 const GOOGLE_MAPS_API_KEY = "AIzaSyDeMv0ZpNSlyoxFGCmMyr99eKHYhIkdgQY";
-const EXAMPLE_GPX_PATH = "./example_Data/activity_22321227538.gpx";
-const EXAMPLE_BEACONS_PATH = "./example_Data/beacons_5_even.json";
-const EMBEDDED_EXAMPLE_BEACONS = [
-  { id: "B1", lat: 45.380645, lon: -122.029773 },
-  { id: "B2", lat: 45.393574, lon: -122.015707 },
-  { id: "B3", lat: 45.397709, lon: -122.015538 },
-  { id: "B4", lat: 45.3906, lon: -122.018963 },
-  { id: "B5", lat: 45.380847, lon: -122.030069 },
-];
+const EVENTS_API_PATH = "/api/events";
+const BEACON_PASS_API_PATH = "/api/beacon-pass";
+const TEST_SEQUENCE_API_PATH = "/api/test/generate";
 
 const state = {
   course: {
@@ -30,12 +24,16 @@ const state = {
     apiLoaded: false,
     apiLoadingPromise: null,
   },
+  service: {
+    eventSource: null,
+    reconnectTimer: null,
+    connected: false,
+  },
 };
 
 const dom = {
-  courseSource: document.getElementById("courseSource"),
   gpxFile: document.getElementById("gpxFile"),
-  beaconsInput: document.getElementById("beaconsInput"),
+  beaconFile: document.getElementById("beaconFile"),
   ridersInput: document.getElementById("ridersInput"),
   loadDataBtn: document.getElementById("loadDataBtn"),
   loadSampleBtn: document.getElementById("loadSampleBtn"),
@@ -43,6 +41,7 @@ const dom = {
   beaconSelect: document.getElementById("beaconSelect"),
   placeInput: document.getElementById("placeInput"),
   recordPassBtn: document.getElementById("recordPassBtn"),
+  runTestBtn: document.getElementById("runTestBtn"),
   status: document.getElementById("status"),
   mapCanvas: document.getElementById("mapCanvas"),
   ridersTableBody: document.getElementById("ridersTableBody"),
@@ -53,13 +52,13 @@ init();
 function init() {
   wireActions();
   resetUiForEmptyState();
+  startBeaconPassStream();
 }
 
 function wireActions() {
-  dom.courseSource.addEventListener("change", onCourseSourceChanged);
   dom.loadDataBtn.addEventListener("click", loadRaceData);
   dom.loadSampleBtn.addEventListener("click", loadSampleData);
-  dom.recordPassBtn.addEventListener("click", () => {
+  dom.recordPassBtn.addEventListener("click", async () => {
     const riderId = dom.riderSelect.value;
     const beaconId = dom.beaconSelect.value;
     const place = dom.placeInput.value ? Number(dom.placeInput.value) : null;
@@ -67,7 +66,20 @@ function wireActions() {
       setStatus("Select a rider and beacon before recording a pass.", true);
       return;
     }
-    recordBeaconPass({ riderId, beaconId, place, timestamp: Date.now() });
+    try {
+      await postBeaconPass({ riderId, beaconId, place, timestamp: Date.now() });
+      setStatus(`Beacon pass sent to service: rider ${riderId}, beacon ${beaconId}.`);
+    } catch (error) {
+      setStatus(error.message, true);
+    }
+  });
+  dom.runTestBtn.addEventListener("click", async () => {
+    try {
+      const run = await startTestSequence();
+      setStatus(`Test sequence started (${run.totalEvents} events).`);
+    } catch (error) {
+      setStatus(error.message, true);
+    }
   });
 }
 
@@ -75,35 +87,24 @@ function resetUiForEmptyState() {
   dom.riderSelect.innerHTML = "";
   dom.beaconSelect.innerHTML = "";
   dom.ridersTableBody.innerHTML = "";
-  onCourseSourceChanged();
 }
 
 async function loadRaceData() {
   try {
-    const source = dom.courseSource.value;
-
     await ensureGoogleMapsLoaded(GOOGLE_MAPS_API_KEY);
     ensureMapReady();
 
-    let gpxText = "";
-    let beaconInput = null;
-
-    if (source === "example") {
-      const [exampleGpxText, exampleBeaconInput] = await Promise.all([
-        fetchText(EXAMPLE_GPX_PATH),
-        loadExampleBeacons(),
-      ]);
-      gpxText = exampleGpxText;
-      beaconInput = exampleBeaconInput;
-      dom.beaconsInput.value = JSON.stringify(beaconInput, null, 2);
-    } else {
-      const gpxFile = dom.gpxFile.files[0];
-      if (!gpxFile) {
-        throw new Error("Select a GPX file first.");
-      }
-      gpxText = await gpxFile.text();
-      beaconInput = safeJsonParse(dom.beaconsInput.value, "beacons");
+    const gpxFile = dom.gpxFile.files[0];
+    if (!gpxFile) {
+      throw new Error("Select a GPX file first.");
     }
+    const beaconFile = dom.beaconFile.files[0];
+    if (!beaconFile) {
+      throw new Error("Select a beacon JSON file first.");
+    }
+
+    const gpxText = await gpxFile.text();
+    const beaconInput = safeJsonParse(await beaconFile.text(), "beacons");
 
     const course = parseGpx(gpxText);
     if (course.points.length < 2) {
@@ -124,43 +125,138 @@ async function loadRaceData() {
     populateSelects();
     restartProjectionLoop();
     renderAll();
-    setStatus("Race data loaded. Record beacon passes as events arrive.");
+    setStatus("Race data loaded. Waiting for beacon pass events from service.");
   } catch (error) {
     setStatus(error.message, true);
   }
 }
 
-function onCourseSourceChanged() {
-  const useExample = dom.courseSource.value === "example";
-  dom.gpxFile.disabled = useExample;
-  dom.beaconsInput.disabled = useExample;
+function startBeaconPassStream() {
+  if (state.service.eventSource) {
+    state.service.eventSource.close();
+    state.service.eventSource = null;
+  }
+
+  const source = new EventSource(EVENTS_API_PATH);
+  state.service.eventSource = source;
+
+  source.onopen = () => {
+    state.service.connected = true;
+    clearServiceReconnectTimer();
+    setStatus("Connected to beacon event service.");
+  };
+
+  source.onerror = () => {
+    state.service.connected = false;
+    source.close();
+    scheduleStreamReconnect();
+    setStatus("Disconnected from beacon event service. Retrying...", true);
+  };
+
+  source.addEventListener("beacon-pass", (event) => {
+    try {
+      const payload = safeJsonParse(event.data, "beacon-pass event");
+      recordBeaconPass(payload, { source: "service" });
+    } catch (error) {
+      setStatus(`Invalid beacon-pass event: ${error.message}`, true);
+    }
+  });
 }
 
-async function fetchText(url) {
+function scheduleStreamReconnect() {
+  if (state.service.reconnectTimer) {
+    return;
+  }
+  state.service.reconnectTimer = setTimeout(() => {
+    state.service.reconnectTimer = null;
+    startBeaconPassStream();
+  }, 2000);
+}
+
+function clearServiceReconnectTimer() {
+  if (!state.service.reconnectTimer) {
+    return;
+  }
+  clearTimeout(state.service.reconnectTimer);
+  state.service.reconnectTimer = null;
+}
+
+async function postBeaconPass(eventPayload) {
   let response;
   try {
-    response = await fetch(url, { cache: "no-store" });
+    response = await fetch(BEACON_PASS_API_PATH, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(eventPayload),
+    });
   } catch {
-    throw new Error(
-      `Could not fetch ${url}. If you opened index.html directly, run a local web server so example files can be loaded.`,
-    );
+    throw new Error("Could not reach beacon event service. Is `npm start` running?");
   }
-  if (!response.ok) {
-    throw new Error(`Failed to load ${url} (${response.status}).`);
+
+  let responseBody = null;
+  try {
+    responseBody = await response.json();
+  } catch {
+    responseBody = null;
   }
-  return response.text();
+
+  if (!response.ok || !responseBody?.ok) {
+    const reason = responseBody?.error || `HTTP ${response.status}`;
+    throw new Error(`Beacon event rejected by service: ${reason}`);
+  }
 }
 
-async function loadExampleBeacons() {
-  try {
-    const exampleBeaconsText = await fetchText(EXAMPLE_BEACONS_PATH);
-    return safeJsonParse(exampleBeaconsText, "example beacons");
-  } catch (error) {
-    if (window.location.protocol === "file:") {
-      return EMBEDDED_EXAMPLE_BEACONS;
-    }
-    throw error;
+function getTestBeaconIds() {
+  return state.beacons.map((b) => b.id);
+}
+
+async function startTestSequence() {
+  if (state.riders.length === 0) {
+    throw new Error("Load race data with riders before running test sequence.");
   }
+  if (state.beacons.length < 1) {
+    throw new Error("Need at least 1 beacon loaded to run test sequence.");
+  }
+
+  const riderIds = state.riders.map((r) => r.id);
+  const beaconIds = getTestBeaconIds();
+  if (beaconIds.length < 1) {
+    throw new Error("Could not resolve beacon ids for test sequence.");
+  }
+
+  let response;
+  try {
+    response = await fetch(TEST_SEQUENCE_API_PATH, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        riderIds,
+        beaconIds,
+        minDelaySeconds: 10,
+        maxDelaySeconds: 15,
+      }),
+    });
+  } catch {
+    throw new Error("Could not reach test sequence service. Is `npm start` running?");
+  }
+
+  let responseBody = null;
+  try {
+    responseBody = await response.json();
+  } catch {
+    responseBody = null;
+  }
+
+  if (!response.ok || !responseBody?.ok) {
+    const reason = responseBody?.error || `HTTP ${response.status}`;
+    throw new Error(`Test sequence rejected by service: ${reason}`);
+  }
+
+  return responseBody.run;
 }
 
 function ensureGoogleMapsLoaded(apiKey) {
@@ -221,6 +317,8 @@ function normalizeBeacons(raw, course) {
     throw new Error("Beacons JSON must be a non-empty array.");
   }
 
+  // Preserve beacon order from input JSON. For loop tracks, first and last
+  // beacons can be at similar coordinates, so distance sorting breaks sequence.
   return raw
     .map((item, index) => {
       if (!item?.id || typeof item.lat !== "number" || typeof item.lon !== "number") {
@@ -234,8 +332,7 @@ function normalizeBeacons(raw, course) {
         coursePointIndex: snapped.pointIndex,
         distanceAlongCourse: snapped.distance,
       };
-    })
-    .sort((a, b) => a.distanceAlongCourse - b.distanceAlongCourse);
+    });
 }
 
 function normalizeRiders(raw) {
@@ -270,6 +367,7 @@ function normalizeRiders(raw) {
       paceMps: null,
       frozenAtBeaconId: null,
       latestPlace: null,
+      finished: false,
     };
   });
 }
@@ -360,10 +458,13 @@ function populateSelects() {
     .join("");
 }
 
-function recordBeaconPass({ riderId, beaconId, place = null, timestamp = Date.now() }) {
+function recordBeaconPass({ riderId, beaconId, place = null, timestamp = Date.now() }, options = {}) {
   const rider = state.riderMap.get(riderId);
   const beacon = state.beacons.find((b) => b.id === beaconId);
   if (!rider || !beacon) {
+    if (options.source === "service") {
+      return;
+    }
     setStatus("Invalid rider or beacon in pass event.", true);
     return;
   }
@@ -381,6 +482,10 @@ function recordBeaconPass({ riderId, beaconId, place = null, timestamp = Date.no
   rider.confirmedDistance = Math.max(rider.confirmedDistance, beacon.distanceAlongCourse);
   rider.projectedDistance = rider.confirmedDistance;
   rider.latestPlace = place;
+  const lastBeacon = state.beacons[state.beacons.length - 1];
+  if (lastBeacon && beacon.id === lastBeacon.id) {
+    rider.finished = true;
+  }
   if (rider.frozenAtBeaconId === beaconId) {
     rider.frozenAtBeaconId = null;
   }
@@ -388,7 +493,7 @@ function recordBeaconPass({ riderId, beaconId, place = null, timestamp = Date.no
   recalculateRiderPace(rider);
 
   renderAll();
-  setStatus(`Pass recorded: ${rider.plate} at beacon ${beaconId}.`);
+  setStatus(`Pass recorded from ${options.source || "local"}: ${rider.plate} at beacon ${beaconId}.`);
 }
 
 function recalculateRiderPace(rider) {
@@ -436,6 +541,12 @@ function restartProjectionLoop() {
 function updateProjectedLocations() {
   const now = Date.now();
   for (const rider of state.riders) {
+    if (rider.finished) {
+      rider.frozenAtBeaconId = null;
+      rider.projectedDistance = rider.confirmedDistance;
+      continue;
+    }
+
     if (!rider.paceMps || rider.events.length < 2) {
       rider.projectedDistance = rider.confirmedDistance;
       continue;
@@ -642,7 +753,9 @@ function renderRidersTable() {
       const lastBeacon = lastEvent ? lastEvent.beaconId : "-";
       const pace = r.paceMps ? `${(r.paceMps * 3.6).toFixed(1)} km/h` : "-";
       const projectedKm = (r.projectedDistance / 1000).toFixed(2);
-      const riderState = r.frozenAtBeaconId
+      const riderState = r.finished
+        ? "Finished"
+        : r.frozenAtBeaconId
         ? `Waiting @ ${r.frozenAtBeaconId}`
         : r.events.length > 0
           ? "Moving"
@@ -682,9 +795,6 @@ function escapeHtml(raw) {
 
 async function loadSampleData() {
   try {
-    const beaconInput = await loadExampleBeacons();
-    dom.beaconsInput.value = JSON.stringify(beaconInput, null, 2);
-
     dom.ridersInput.value = JSON.stringify(
       [
         { firstName: "Geddy", lastName: "Tarbell", plate: "17" },
@@ -695,7 +805,7 @@ async function loadSampleData() {
       2,
     );
 
-    setStatus("Sample riders/beacons loaded. Choose a source and click Load Race Data.");
+    setStatus("Sample riders loaded. Select GPX and beacon JSON files, then click Load Race Data.");
   } catch (error) {
     setStatus(error.message, true);
   }
@@ -703,4 +813,6 @@ async function loadSampleData() {
 
 window.MotoTrk = {
   recordBeaconPass,
+  postBeaconPass,
+  startTestSequence,
 };
